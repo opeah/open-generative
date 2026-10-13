@@ -2,17 +2,27 @@
 
 import { useState } from 'react';
 import { getCommonCopy } from '@/lib/locales';
+import { isCredentialComplete, serializeCredential } from 'studio';
 
-export default function ApiKeyModal({ onSave, onClose, overlay = false, title, subtitle, locale = 'en' }) {
-  const [key, setKey] = useState('');
+export default function ApiKeyModal({ providers = [], initialProviderId, onSave, onClose, overlay = false, title, subtitle, locale = 'en' }) {
+  const [providerId, setProviderId] = useState(initialProviderId || providers[0]?.id);
+  const [values, setValues] = useState({});
   const [error, setError] = useState('');
   const copy = getCommonCopy(locale).apiKeyModal;
+  const provider = providers.find((item) => item.id === providerId) || providers[0];
+  const fields = provider?.credential.fields || [];
+  const helpUrl = provider?.credential.helpUrl;
+
+  const handleProviderChange = (nextId) => {
+    setProviderId(nextId);
+    setValues({});
+    setError('');
+  };
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    const trimmed = key.trim();
-    if (!trimmed) { setError(copy.missingKeyError); return; }
-    onSave(trimmed);
+    if (!provider || !isCredentialComplete(provider.credential, values)) { setError(copy.missingKeyError); return; }
+    onSave(serializeCredential(provider.credential, values), provider.id);
   };
 
   const wrapperClass = overlay
@@ -45,26 +55,49 @@ export default function ApiKeyModal({ onSave, onClose, overlay = false, title, s
           </h1>
           <p className="text-white/40 text-[13px] leading-relaxed px-4">
             {subtitle || (
-              <>{copy.subtitlePrefix} <a href="https://muapi.ai/access-keys" target="_blank" rel="noreferrer" className="text-[#22d3ee] hover:text-[#e5ff33] transition-colors">Muapi.ai</a> {copy.subtitleSuffix}</>
+              <>{copy.subtitlePrefix} <a href={helpUrl} target="_blank" rel="noreferrer" className="text-[#22d3ee] hover:text-[#e5ff33] transition-colors">{provider?.name}</a> {copy.subtitleSuffix}</>
             )}
           </p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-6">
-          <div className="space-y-2">
-            <label className="block text-xs font-bold text-white/30 ml-1">
-              {copy.label}
-            </label>
-            <input
-              type="password"
-              value={key}
-              onChange={(e) => { setKey(e.target.value); setError(''); }}
-              placeholder={copy.placeholder}
-              className="w-full bg-white/5 border border-white/[0.03] rounded-md px-5 py-3 text-sm text-white placeholder:text-white/10 focus:outline-none focus:ring-1 focus:ring-[#22d3ee]/30 focus:bg-white/[0.07] transition-all"
-              suppressHydrationWarning
-            />
-            {error && <p className="mt-2 text-red-500/80 text-[11px] font-medium ml-1">{error}</p>}
-          </div>
+          {providers.length > 1 && (
+            <div className="space-y-2">
+              <label htmlFor="provider-select" className="block text-xs font-bold text-white/30 ml-1">
+                {copy.provider}
+              </label>
+              <select
+                id="provider-select"
+                value={provider?.id}
+                onChange={(e) => handleProviderChange(e.target.value)}
+                className="w-full bg-white/5 border border-white/[0.03] rounded-md px-4 py-3 text-sm text-white focus:outline-none focus:ring-1 focus:ring-[#22d3ee]/30 transition-all"
+                suppressHydrationWarning
+              >
+                {providers.map((item) => (
+                  <option key={item.id} value={item.id} className="bg-[#0a0a0a]">{item.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {fields.map((field, index) => (
+            <div key={`${provider.id}:${field.name}`} className="space-y-2">
+              <label htmlFor={`credential-${field.name}`} className="block text-xs font-bold text-white/30 ml-1">
+                {fields.length > 1 ? field.label : copy.label}
+              </label>
+              <input
+                id={`credential-${field.name}`}
+                type={field.secret ? 'password' : 'text'}
+                value={values[field.name] || ''}
+                onChange={(e) => { setValues((previous) => ({ ...previous, [field.name]: e.target.value })); setError(''); }}
+                placeholder={copy.placeholder}
+                autoFocus={index === 0}
+                className="w-full bg-white/5 border border-white/[0.03] rounded-md px-5 py-3 text-sm text-white placeholder:text-white/10 focus:outline-none focus:ring-1 focus:ring-[#22d3ee]/30 focus:bg-white/[0.07] transition-all"
+                suppressHydrationWarning
+              />
+            </div>
+          ))}
+          {error && <p className="-mt-4 text-red-500/80 text-[11px] font-medium ml-1">{error}</p>}
 
           <button
             type="submit"
@@ -74,12 +107,14 @@ export default function ApiKeyModal({ onSave, onClose, overlay = false, title, s
             {copy.submit}
           </button>
 
-          <p className="text-center text-[12px] text-white/20 pt-2">
-            {copy.needKey}{' '}
-            <a href="https://muapi.ai/access-keys" target="_blank" rel="noreferrer" className="text-white/40 hover:text-[#22d3ee] transition-colors font-medium">
-              {copy.getOneFree}
-            </a>
-          </p>
+          {helpUrl && (
+            <p className="text-center text-[12px] text-white/20 pt-2">
+              {copy.needKey}{' '}
+              <a href={helpUrl} target="_blank" rel="noreferrer" className="text-white/40 hover:text-[#22d3ee] transition-colors font-medium">
+                {copy.getOneFree}
+              </a>
+            </p>
+          )}
         </form>
       </div>
     </div>

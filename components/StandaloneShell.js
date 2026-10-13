@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
-import { ImageStudio, VideoStudio, ClippingStudio, MotionControlStudio, VibeMotionStudio, LipSyncStudio, RecastStudio, CinemaStudio, AudioStudio, MarketingStudio, WorkflowStudio, AgentStudio, AppsStudio, AiInfluencerStudio, LayersStudio, getUserBalance } from 'studio';
+import { ImageStudio, VideoStudio, ClippingStudio, MotionControlStudio, VibeMotionStudio, LipSyncStudio, RecastStudio, CinemaStudio, AudioStudio, MarketingStudio, WorkflowStudio, AgentStudio, AppsStudio, AiInfluencerStudio, LayersStudio, DEFAULT_PROVIDER_ID, getProvider, listProviders, getActiveProvider, getActiveProviderId, setActiveProviderId, readProviderCredential, writeProviderCredential, clearProviderCredential, providerSupportsStudio } from 'studio';
 
 const DesignAgentStudio = dynamic(() => import('studio').then(mod => mod.DesignAgentStudio), {
   ssr: false,
@@ -266,7 +266,6 @@ const getNavigationCategory = (tabId) => (
   NAVIGATION_CATEGORIES.find((category) => category.tabIds.includes(tabId))
 );
 
-const STORAGE_KEY = 'muapi_key';
 const NOTIFICATIONS_STORAGE_KEY = 'open_gen_notifications_v1';
 const MAX_VISIBLE_NOTIFICATIONS = 3;
 
@@ -296,6 +295,13 @@ const persistNotifications = (notifications) => {
     // Notification persistence is optional; rendering still works without storage.
   }
 };
+
+// Studios the active provider can't serve are not mounted at all, so their
+// mount-time API calls never send this provider's key to another service.
+function StudioPane({ id, activeTab, isAvailable, children }) {
+  if (!isAvailable(id)) return null;
+  return <div className={activeTab === id ? "h-full w-full" : "hidden"}>{children}</div>;
+}
 
 export default function StandaloneShell({ locale = 'en' }) {
   const params = useParams();
@@ -342,6 +348,13 @@ export default function StandaloneShell({ locale = 'en' }) {
   };
   
   const [apiKey, setApiKey] = useState(null);
+  const [providerId, setProviderId] = useState(DEFAULT_PROVIDER_ID);
+  const provider = getProvider(providerId);
+  const isTabAvailable = useCallback((tabId) => providerSupportsStudio(provider, tabId), [provider]);
+  const navigationCategories = NAVIGATION_CATEGORIES
+    .map((category) => ({ ...category, tabIds: category.tabIds.filter(isTabAvailable) }))
+    .filter((category) => category.tabIds.length > 0);
+  const exploreAppsTab = isTabAvailable('apps') ? EXPLORE_APPS_TAB : null;
   const [activeTab, setActiveTab] = useState(getInitialTab());
 
   const [balance, setBalance] = useState(null);
@@ -449,7 +462,9 @@ export default function StandaloneShell({ locale = 'en' }) {
 
   const fetchBalance = useCallback(async (key) => {
     try {
-      const data = await getUserBalance(key);
+      const activeProvider = getActiveProvider();
+      if (!activeProvider.getUserBalance) return;
+      const data = await activeProvider.getUserBalance(key);
       setBalance(data.balance);
     } catch (err) {
       console.error('Balance fetch failed:', err);
@@ -576,28 +591,48 @@ export default function StandaloneShell({ locale = 'en' }) {
 
   useEffect(() => {
     setHasMounted(true);
-    const stored = localStorage.getItem(STORAGE_KEY);
+    const activeProviderId = getActiveProviderId();
+    setProviderId(activeProviderId);
+    const stored = readProviderCredential(activeProviderId);
     if (stored) {
       setApiKey(stored);
       fetchBalance(stored);
       // Sync cookie immediately on mount to establish identity for background requests
-      document.cookie = `muapi_key=${stored}; path=/; max-age=31536000; SameSite=Lax`;
+      if (activeProviderId === 'muapi') document.cookie = `muapi_key=${stored}; path=/; max-age=31536000; SameSite=Lax`;
     }
   }, [fetchBalance]);
 
-  const handleKeySave = useCallback((key) => {
-    localStorage.setItem(STORAGE_KEY, key);
+  // The studios load the active provider's catalog once, so switching
+  // provider goes through a reload.
+  const switchProvider = useCallback((nextProviderId) => {
+    setActiveProviderId(nextProviderId);
+    window.location.reload();
+  }, []);
+
+  const handleKeySave = useCallback((key, selectedProviderId = providerId) => {
+    writeProviderCredential(selectedProviderId, key);
+    if (selectedProviderId !== providerId) {
+      switchProvider(selectedProviderId);
+      return;
+    }
     setApiKey(key);
     fetchBalance(key);
-    document.cookie = `muapi_key=${key}; path=/; max-age=31536000; SameSite=Lax`;
-  }, [fetchBalance]);
+    if (selectedProviderId === 'muapi') document.cookie = `muapi_key=${key}; path=/; max-age=31536000; SameSite=Lax`;
+  }, [fetchBalance, providerId, switchProvider]);
 
   const handleKeyChange = useCallback(() => {
-    localStorage.removeItem(STORAGE_KEY);
+    clearProviderCredential(providerId);
     setApiKey(null);
     setBalance(null);
-    document.cookie = "muapi_key=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
-  }, []);
+    if (providerId === 'muapi') document.cookie = "muapi_key=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+  }, [providerId]);
+
+  // Deep links to a tab the active provider can't serve fall back to images.
+  useEffect(() => {
+    if (isTabAvailable(activeTab)) return;
+    window.history.replaceState(null, '', studioPath('image'));
+    setActiveTab('image');
+  }, [activeTab, isTabAvailable, studioPath]);
 
   // Inject API key into all outgoing Axios requests (prop-based approach)
   // We use an interceptor to be selective and NOT send the key to external domains like S3
@@ -605,7 +640,7 @@ export default function StandaloneShell({ locale = 'en' }) {
     // Safety: Clear any global defaults that might have been set previously
     delete axios.defaults.headers.common['x-api-key'];
 
-    if (!apiKey) return;
+    if (!apiKey || providerId !== 'muapi') return;
 
     const interceptorId = axios.interceptors.request.use((config) => {
       // Check if URL is local/proxied
@@ -622,7 +657,7 @@ export default function StandaloneShell({ locale = 'en' }) {
     return () => {
       axios.interceptors.request.eject(interceptorId);
     };
-  }, [apiKey]);
+  }, [apiKey, providerId]);
 
   // Poll for balance every 30 seconds if key is present
   useEffect(() => {
@@ -676,7 +711,7 @@ export default function StandaloneShell({ locale = 'en' }) {
   );
 
   if (!apiKey) {
-    return <ApiKeyModal onSave={handleKeySave} locale={locale} />;
+    return <ApiKeyModal key={providerId} providers={listProviders()} initialProviderId={providerId} onSave={handleKeySave} locale={locale} />;
   }
 
   return (
@@ -839,7 +874,7 @@ export default function StandaloneShell({ locale = 'en' }) {
           >
             <nav aria-label={copy.shell.studioNavigation} className="flex-1 overflow-y-auto overflow-x-hidden scrollbar-none py-2 px-2">
               <div className="space-y-1">
-                {NAVIGATION_CATEGORIES.map((category) => {
+                {navigationCategories.map((category) => {
                   const isCategoryActive = activeCategory?.id === category.id;
                   const isCollapsed = isSidebarCollapsed && !isMobileOpen;
                   const isCategoryOpen = !isCollapsed && expandedCategoryId === category.id;
@@ -940,7 +975,7 @@ export default function StandaloneShell({ locale = 'en' }) {
                 })}
               </div>
 
-              {EXPLORE_APPS_TAB && (
+              {exploreAppsTab && (
                 <div className="mt-3 pt-3 border-t border-white/[0.07]">
                   <a
                     href={studioPath(EXPLORE_APPS_TAB.id)}
@@ -975,40 +1010,40 @@ export default function StandaloneShell({ locale = 'en' }) {
 
         {/* Studio Content */}
         <div className="flex-1 min-h-0 h-full relative overflow-hidden bg-[#030303]">
-        <div className={activeTab === 'image' ? "h-full w-full" : "hidden"}>
+        <StudioPane id="image" activeTab={activeTab} isAvailable={isTabAvailable}>
           <ImageStudio apiKey={apiKey} locale={locale} droppedFiles={droppedFiles} onFilesHandled={handleFilesHandled} onGenerationStart={makeGenerationStartCallback('image')} onGenerationEnd={makeGenerationEndCallback('image')} onGenerationComplete={makeSuccessCallback('image')} onGenerationError={makeErrorCallback('image')} />
-        </div>
-        <div className={activeTab === 'layers' ? "h-full w-full" : "hidden"}>
+        </StudioPane>
+        <StudioPane id="layers" activeTab={activeTab} isAvailable={isTabAvailable}>
           <LayersStudio apiKey={apiKey} locale={locale} droppedFiles={droppedFiles} onFilesHandled={handleFilesHandled} onGenerationStart={makeGenerationStartCallback('layers')} onGenerationEnd={makeGenerationEndCallback('layers')} onGenerationComplete={makeSuccessCallback('layers')} onGenerationError={makeErrorCallback('layers')} />
-        </div>
-        <div className={activeTab === 'video' ? "h-full w-full" : "hidden"}>
+        </StudioPane>
+        <StudioPane id="video" activeTab={activeTab} isAvailable={isTabAvailable}>
           <VideoStudio apiKey={apiKey} locale={locale} droppedFiles={droppedFiles} onFilesHandled={handleFilesHandled} onGenerationStart={makeGenerationStartCallback('video')} onGenerationEnd={makeGenerationEndCallback('video')} onGenerationComplete={makeSuccessCallback('video')} onGenerationError={makeErrorCallback('video')} />
-        </div>
-        <div className={activeTab === 'clipping' ? "h-full w-full" : "hidden"}>
+        </StudioPane>
+        <StudioPane id="clipping" activeTab={activeTab} isAvailable={isTabAvailable}>
           <ClippingStudio apiKey={apiKey} locale={locale} droppedFiles={droppedFiles} onFilesHandled={handleFilesHandled} onGenerationStart={makeGenerationStartCallback('clipping')} onGenerationEnd={makeGenerationEndCallback('clipping')} onGenerationComplete={makeSuccessCallback('clipping')} onGenerationError={makeErrorCallback('clipping')} />
-        </div>
-        <div className={activeTab === 'motion-control' ? "h-full w-full" : "hidden"}>
+        </StudioPane>
+        <StudioPane id="motion-control" activeTab={activeTab} isAvailable={isTabAvailable}>
           <MotionControlStudio apiKey={apiKey} locale={locale} droppedFiles={droppedFiles} onFilesHandled={handleFilesHandled} onGenerationStart={makeGenerationStartCallback('motion-control')} onGenerationEnd={makeGenerationEndCallback('motion-control')} onGenerationComplete={makeSuccessCallback('motion-control')} onGenerationError={makeErrorCallback('motion-control')} />
-        </div>
-        <div className={activeTab === 'vibe-motion' ? "h-full w-full" : "hidden"}>
+        </StudioPane>
+        <StudioPane id="vibe-motion" activeTab={activeTab} isAvailable={isTabAvailable}>
           <VibeMotionStudio apiKey={apiKey} locale={locale} onGenerationStart={makeGenerationStartCallback('vibe-motion')} onGenerationEnd={makeGenerationEndCallback('vibe-motion')} onGenerationComplete={makeSuccessCallback('vibe-motion')} onGenerationError={makeErrorCallback('vibe-motion')} />
-        </div>
-        <div className={activeTab === 'lipsync' ? "h-full w-full" : "hidden"}>
+        </StudioPane>
+        <StudioPane id="lipsync" activeTab={activeTab} isAvailable={isTabAvailable}>
           <LipSyncStudio apiKey={apiKey} locale={locale} droppedFiles={droppedFiles} onFilesHandled={handleFilesHandled} onGenerationStart={makeGenerationStartCallback('lipsync')} onGenerationEnd={makeGenerationEndCallback('lipsync')} onGenerationComplete={makeSuccessCallback('lipsync')} onGenerationError={makeErrorCallback('lipsync')} />
-        </div>
-        <div className={activeTab === 'body-swap' ? "h-full w-full" : "hidden"}>
+        </StudioPane>
+        <StudioPane id="body-swap" activeTab={activeTab} isAvailable={isTabAvailable}>
           <RecastStudio apiKey={apiKey} locale={locale} droppedFiles={droppedFiles} onFilesHandled={handleFilesHandled} onGenerationStart={makeGenerationStartCallback('body-swap')} onGenerationEnd={makeGenerationEndCallback('body-swap')} onGenerationComplete={makeSuccessCallback('body-swap')} onGenerationError={makeErrorCallback('body-swap')} />
-        </div>
-        <div className={activeTab === 'cinema' ? "h-full w-full" : "hidden"}>
+        </StudioPane>
+        <StudioPane id="cinema" activeTab={activeTab} isAvailable={isTabAvailable}>
           <CinemaStudio apiKey={apiKey} locale={locale} onGenerationStart={makeGenerationStartCallback('cinema')} onGenerationEnd={makeGenerationEndCallback('cinema')} onGenerationComplete={makeSuccessCallback('cinema')} onGenerationError={makeErrorCallback('cinema')} />
-        </div>
-        <div className={activeTab === 'audio' ? "h-full w-full" : "hidden"}>
+        </StudioPane>
+        <StudioPane id="audio" activeTab={activeTab} isAvailable={isTabAvailable}>
           <AudioStudio apiKey={apiKey} locale={locale} droppedFiles={droppedFiles} onFilesHandled={handleFilesHandled} onGenerationStart={makeGenerationStartCallback('audio')} onGenerationEnd={makeGenerationEndCallback('audio')} onGenerationComplete={makeSuccessCallback('audio')} onGenerationError={makeErrorCallback('audio')} />
-        </div>
-        <div className={activeTab === 'marketing' ? "h-full w-full" : "hidden"}>
+        </StudioPane>
+        <StudioPane id="marketing" activeTab={activeTab} isAvailable={isTabAvailable}>
           <MarketingStudio apiKey={apiKey} locale={locale} droppedFiles={droppedFiles} onFilesHandled={handleFilesHandled} onGenerationStart={makeGenerationStartCallback('marketing')} onGenerationEnd={makeGenerationEndCallback('marketing')} onGenerationComplete={makeSuccessCallback('marketing')} onGenerationError={makeErrorCallback('marketing')} />
-        </div>
-        <div className={activeTab === 'workflows' ? "h-full w-full" : "hidden"}>
+        </StudioPane>
+        <StudioPane id="workflows" activeTab={activeTab} isAvailable={isTabAvailable}>
           <WorkflowStudio
             apiKey={apiKey}
             isHeaderVisible={isHeaderVisible}
@@ -1018,11 +1053,11 @@ export default function StandaloneShell({ locale = 'en' }) {
             onGenerationComplete={makeSuccessCallback('workflows')}
             onGenerationError={makeErrorCallback('workflows')}
           />
-        </div>
-        <div className={activeTab === 'agents' ? "h-full w-full" : "hidden"}>
+        </StudioPane>
+        <StudioPane id="agents" activeTab={activeTab} isAvailable={isTabAvailable}>
           <AgentStudio apiKey={apiKey} locale={locale} isHeaderVisible={isHeaderVisible} onToggleHeader={setIsHeaderVisible} />
-        </div>
-        <div className={activeTab === 'design-agent' ? "h-full w-full" : "hidden"}>
+        </StudioPane>
+        <StudioPane id="design-agent" activeTab={activeTab} isAvailable={isTabAvailable}>
           {activeTab === 'design-agent' && (
             <DesignAgentStudio
               apiKey={apiKey}
@@ -1034,11 +1069,11 @@ export default function StandaloneShell({ locale = 'en' }) {
               onGenerationError={makeErrorCallback('design-agent')}
             />
           )}
-        </div>
-        <div className={activeTab === 'apps' ? "h-full w-full" : "hidden"}>
+        </StudioPane>
+        <StudioPane id="apps" activeTab={activeTab} isAvailable={isTabAvailable}>
           <AppsStudio apiKey={apiKey} locale={locale} />
-        </div>
-        <div className={activeTab === 'ai-influencer' ? "h-full w-full" : "hidden"}>
+        </StudioPane>
+        <StudioPane id="ai-influencer" activeTab={activeTab} isAvailable={isTabAvailable}>
           <AiInfluencerStudio
             apiKey={apiKey}
             locale={locale}
@@ -1047,7 +1082,7 @@ export default function StandaloneShell({ locale = 'en' }) {
             onGenerationComplete={makeSuccessCallback('ai-influencer')}
             onGenerationError={makeErrorCallback('ai-influencer')}
           />
-        </div>
+        </StudioPane>
       </div>
     </div>
 
@@ -1182,6 +1217,22 @@ export default function StandaloneShell({ locale = 'en' }) {
             </p>
 
             <div className="space-y-4 mb-8">
+              <div className="bg-white/5 border border-white/[0.03] rounded-md p-4">
+                <label htmlFor="settings-provider" className="block text-xs font-bold text-white/30 mb-2">
+                  {copy.settingsModal.provider}
+                </label>
+                <select
+                  id="settings-provider"
+                  value={providerId}
+                  onChange={(event) => switchProvider(event.target.value)}
+                  className="w-full bg-transparent text-[13px] text-white/80 focus:outline-none"
+                >
+                  {listProviders().map((item) => (
+                    <option key={item.id} value={item.id} className="bg-[#0a0a0a]">{item.name}</option>
+                  ))}
+                </select>
+                <p className="mt-2 text-[11px] text-white/30">{copy.settingsModal.providerHint}</p>
+              </div>
               <div className="bg-white/5 border border-white/[0.03] rounded-md p-4">
                 <label className="block text-xs font-bold text-white/30 mb-2">
                    {copy.settingsModal.activeApiKey}

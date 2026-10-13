@@ -42,7 +42,9 @@
     "subtitle": "管理您的 AI 工作室偏好设置和身份验证。",
     "activeApiKey": "当前 API 密钥",
     "changeKey": "更换密钥",
-    "close": "关闭"
+    "close": "关闭",
+    "provider": "服务商",
+    "providerHint": "切换服务商会重新加载工作室及其模型。"
   },
   "notifications": {
     "generating": "正在生成",
@@ -64,6 +66,7 @@
     "missingKeyError": "请输入您的 API 密钥",
     "submit": "开始使用",
     "needKey": "还没有密钥？",
-    "getOneFree": "免费获取 →"
+    "getOneFree": "免费获取 →",
+    "provider": "服务商"
   }
 }

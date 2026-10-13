@@ -18,3 +18,17 @@ export { default as AiInfluencerStudio } from './components/AiInfluencerStudio';
 export { default as LayersStudio } from './components/LayersStudio';
 export { default as MotionControlStudio } from './components/MotionControlStudio';
 export * from './muapi';
+export {
+  DEFAULT_PROVIDER_ID,
+  getProvider,
+  listProviders,
+  getActiveProvider,
+  getActiveProviderId,
+  setActiveProviderId,
+  readProviderCredential,
+  writeProviderCredential,
+  clearProviderCredential,
+  providerSupportsStudio,
+  serializeCredential,
+  isCredentialComplete,
+} from './providers/index.js';

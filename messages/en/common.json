@@ -42,7 +42,9 @@
     "subtitle": "Manage your AI studio preferences and authentication.",
     "activeApiKey": "Active API Key",
     "changeKey": "Change Key",
-    "close": "Close"
+    "close": "Close",
+    "provider": "Provider",
+    "providerHint": "Switching provider reloads the studio with its models."
   },
   "notifications": {
     "generating": "is generating",
@@ -64,6 +66,7 @@
     "missingKeyError": "Please enter your API key",
     "submit": "Get Started",
     "needKey": "Need a key?",
-    "getOneFree": "Get one free →"
+    "getOneFree": "Get one free →",
+    "provider": "Provider"
   }
 }
