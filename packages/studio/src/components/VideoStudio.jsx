@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo, useId } from "react";
 import toast, { Toaster } from "react-hot-toast";
-import { generateVideo, generateI2V, processV2V, uploadFile } from "../muapi.js";
+import { generateVideo, generateI2V, processV2V, uploadFile } from "../generation.js";
 import { formatErrorMessage } from "../utils/formatError.js";
 import { scopedPersistKey, migrateLegacyPersistKey } from "../persistKey.js";
 import DrawModal from "./DrawModal.jsx";
@@ -21,7 +21,7 @@ import {
   getResolutionsForI2VModel,
   getEffectsForI2VModel,
   getDefaultEffectForI2VModel,
-} from "../models.js";
+} from "../catalog.js";
 import {
   getFamilyVariant,
   videoModelCatalog,

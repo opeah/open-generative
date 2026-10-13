@@ -7,6 +7,7 @@
   "exports": {
     ".": "./src/index.js",
     "./src/models.js": "./src/models.js",
+    "./providers/server": "./src/providers/server.js",
     "./package.json": "./package.json",
     "./dist/tailwind.css": "./dist/tailwind.css",
     "./ImageStudio": "./src/components/ImageStudio.jsx",

@@ -1,5 +1,9 @@
 import { NextResponse } from 'next/server';
 import { getLocaleFromPathname } from './lib/locales';
+import { providerConnectSources } from 'studio/providers/server';
+
+// Other providers' output hosts, so studios can fetch results for downloads.
+const PROVIDER_CONNECT_SOURCES = providerConnectSources().join(' ');
 
 function addSecurityHeaders(response) {
     // Prevent MIME type sniffing (CWE-693)
@@ -16,7 +20,7 @@ function addSecurityHeaders(response) {
     // and other muapi subdomains that the renderer fetches directly.
     response.headers.set(
         'Content-Security-Policy',
-        "default-src 'self'; script-src 'self' 'unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' data: blob: https:; connect-src 'self' https://muapi.ai https://*.muapi.ai; font-src 'self' data:;"
+        `default-src 'self'; script-src 'self' 'unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' data: blob: https:; connect-src 'self' https://muapi.ai https://*.muapi.ai ${PROVIDER_CONNECT_SOURCES}; font-src 'self' data:;`
     );
     return response;
 }
